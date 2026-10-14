@@ -1,7 +1,5 @@
 ﻿using System.Net.Http.Json;
 
-// 1. The HTTP client pointing at the local Ollama server.
-//    Local models can be slow, so we give it a long timeout.
 var http = new HttpClient
 {
     BaseAddress = new Uri("http://localhost:11434"),
@@ -10,20 +8,47 @@ var http = new HttpClient
 
 const string Model = "qwen3:8b";
 
-// 2. Build the request: which model, the conversation so far, no streaming.
-var request = new ChatRequest(
-    Model: "qwen3:8b",
-    Messages: [new ChatMessage("user", "In one sentence, what is an AI agent?")],
-    Stream: false);
+// The conversation history. THIS is the agent's memory.
+// It starts with a system message: instructions the user doesn't see,
+// which shape how the model behaves for the whole conversation.
+var history = new List<ChatMessage>
+{
+    new("system", "You are a helpful folder assistant. Keep answers short.")
+};
 
-// 3. Send it and read the reply.
-var response = await http.PostAsJsonAsync("/api/chat", request);
-response.EnsureSuccessStatusCode();
+Console.WriteLine("Folder Agent ready. Type 'exit' to quit.\n");
 
-var chat = await response.Content.ReadFromJsonAsync<ChatResponse>();
-Console.WriteLine(chat!.Message.Content);
+while (true)
+{
+    Console.Write("You: ");
+    var input = Console.ReadLine();
+    if (string.IsNullOrWhiteSpace(input)) continue;
+    if (input.Trim().Equals("exit", StringComparison.OrdinalIgnoreCase)) break;
 
-// --- Data shapes matching Ollama's JSON ---
-record ChatRequest(string Model, List<ChatMessage> Messages, bool Stream);
+    // 1. Add the user's message to memory.
+    history.Add(new ChatMessage("user", input));
+
+    // 2. Send the WHOLE history, not just the latest message.
+    var reply = await SendAsync(history);
+
+    // 3. Add the model's reply to memory too, so it remembers what it said.
+    history.Add(reply);
+
+    Console.WriteLine($"Agent: {reply.Content}\n");
+}
+
+// One round-trip to Ollama.
+async Task<ChatMessage> SendAsync(List<ChatMessage> messages)
+{
+    var request = new ChatRequest(Model, messages, Stream: false, Think: false);
+
+    var response = await http.PostAsJsonAsync("/api/chat", request);
+    response.EnsureSuccessStatusCode();
+
+    var chat = await response.Content.ReadFromJsonAsync<ChatResponse>();
+    return chat!.Message;
+}
+
+record ChatRequest(string Model, List<ChatMessage> Messages, bool Stream, bool Think);
 record ChatMessage(string Role, string Content);
 record ChatResponse(ChatMessage Message, bool Done);
